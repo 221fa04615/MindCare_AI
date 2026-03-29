@@ -1,9 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!GEMINI_API_KEY) {
-  console.warn("⚠️ GEMINI_API_KEY is missing. Please set it in your .env file for local development.");
+  console.warn("⚠️ GEMINI_API_KEY is missing. If you are running locally, check your .env file. If deployed, ensure it's set in your environment variables.");
 }
 
 export const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || '' });
@@ -15,15 +15,14 @@ export const analyzeSentiment = async (text: string) => {
   try {
     const response = await ai.models.generateContent({
       model: DEFAULT_MODEL,
-      contents: `Analyze the sentiment of the following text and return a single word (Positive, Neutral, Negative, Stress, Anxiety, Depression, Crisis): "${text}"`,
+      contents: [{ role: 'user', parts: [{ text: `Analyze the sentiment of the following text and return a single word (Positive, Neutral, Negative, Stress, Anxiety, Depression, Crisis): "${text}"` }] }],
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+      }
     });
     return response.text?.trim() || "Neutral";
   } catch (error: any) {
-    if (error?.message?.includes("403") || error?.status === "PERMISSION_DENIED") {
-      console.error("❌ Gemini API Permission Error (403): Make sure the 'Generative Language API' is enabled in your Google Cloud Console and your API key is valid.");
-    } else {
-      console.error("Sentiment analysis error:", error);
-    }
+    console.error("Sentiment analysis error:", error);
     return "Neutral";
   }
 };
@@ -35,15 +34,21 @@ export const getChatbotResponse = async (
   history: { role: string; parts: { text: string }[] }[],
   isProactive: boolean = false
 ) => {
-  if (!GEMINI_API_KEY) return "I'm sorry, I'm not configured with an API key yet. Please check your setup.";
+  if (!GEMINI_API_KEY) {
+    console.error("❌ Gemini API Key is missing in the browser environment.");
+    return "I'm sorry, I'm not configured with an API key yet. Please ensure GEMINI_API_KEY is set in your deployment environment variables.";
+  }
+  
   try {
+    console.log(`🤖 Requesting response from ${DEFAULT_MODEL}...`);
     const response = await ai.models.generateContent({
       model: DEFAULT_MODEL,
       contents: [
-        ...history.map(h => ({ role: h.role === 'user' ? 'user' : 'model', parts: h.parts })),
+        ...history,
         { role: 'user', parts: [{ text: userMessage }] }
       ],
       config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         systemInstruction: `You are ${botName}, a sweet, deeply empathetic, and supportive personal AI psychologist. 
         The user's name is ${userName}. 
         The user is a person from any part of the world, of any age group. 
@@ -69,13 +74,22 @@ export const getChatbotResponse = async (
       }
     });
 
-    return response.text;
+    return response.text || "I'm listening, please tell me more.";
   } catch (error: any) {
+    console.error("❌ Chatbot response error:", error);
+    
     if (error?.message?.includes("403") || error?.status === "PERMISSION_DENIED") {
-      console.error("❌ Gemini API Permission Error (403): Make sure the 'Generative Language API' is enabled in your Google Cloud Console and your API key is valid.");
-      return "I'm having trouble accessing the AI service. Please ensure your API key is valid and has permission to use the Gemini API.";
+      return "I'm having trouble accessing the AI service (403 Forbidden). Please ensure your API key is valid and has permission to use the Gemini API.";
     }
-    console.error("Chatbot response error:", error);
-    return "I'm sorry, I'm having a bit of trouble connecting right now. But I'm still here for you.";
+    
+    if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED") {
+      return "I'm a bit overwhelmed with requests right now. Please give me a moment and try again.";
+    }
+
+    if (error?.message?.includes("fetch") || error?.name === "TypeError") {
+      return "I'm having trouble connecting to the internet. Please check your connection and try again.";
+    }
+
+    return "I'm sorry, I'm having a bit of trouble connecting right now. But I'm still here for you. (Error: " + (error?.message || "Unknown") + ")";
   }
 };
