@@ -20,6 +20,7 @@ const ChatPage: React.FC = () => {
   const [showCrisisAlert, setShowCrisisAlert] = useState(false);
   const [isProactive, setIsProactive] = useState(true);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline'>('connected');
+  const [contextHistory, setContextHistory] = useState<{ role: string; parts: { text: string }[] }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const botName = user?.gender === 'Female' ? 'Arjun' : 'Siya';
@@ -36,7 +37,35 @@ const ChatPage: React.FC = () => {
     };
     checkStatus();
 
-    // Fresh start for current session
+    // Fetch initial context history
+    const fetchInitialContext = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch('/api/chats', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const historyData = await res.json();
+        if (historyData.length > 0) {
+          const lastMsg = historyData[historyData.length - 1];
+          const currentTime = new Date().getTime();
+          const lastTime = new Date(lastMsg.timestamp).getTime();
+          const hoursDiff = (currentTime - lastTime) / (1000 * 60 * 60);
+
+          if (hoursDiff < 4) {
+            const initialContext = historyData.slice(-10).map((m: any) => ({
+              role: m.sender === 'user' ? 'user' : 'model',
+              parts: [{ text: m.message }]
+            }));
+            setContextHistory(initialContext);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch initial context:", err);
+      }
+    };
+    fetchInitialContext();
+
+    // Fresh start for current session UI
     setMessages([]); 
   }, [token]);
 
@@ -71,89 +100,89 @@ const ChatPage: React.FC = () => {
     const userMsg = input.trim();
     setInput('');
 
-    // Sentiment Analysis
-    const sentiment = await analyzeSentiment(userMsg);
-    const isCrisis = sentiment === 'Crisis' || /suicide|die|kill myself/i.test(userMsg);
+    // Optimistic UI Update
+    const tempUserMsg: ChatMessage = {
+      _id: Date.now().toString(),
+      message: userMsg,
+      sender: 'user',
+      timestamp: new Date().toISOString(),
+      userId: user?.id || ''
+    };
+    setMessages(prev => [...prev, tempUserMsg]);
+    setIsTyping(true);
 
-    if (isCrisis) {
-      setShowCrisisAlert(true);
-      await fetch('/api/crisis', {
+    try {
+      // Run sentiment analysis and bot response preparation in parallel
+      const [sentiment] = await Promise.all([
+        analyzeSentiment(userMsg),
+        // We don't wait for the POST to finish before starting the bot response
+        fetch('/api/chats', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ message: userMsg, sender: 'user' }),
+        })
+      ]);
+
+      const isCrisis = sentiment === 'Crisis' || /suicide|die|kill myself/i.test(userMsg);
+
+      if (isCrisis) {
+        setShowCrisisAlert(true);
+        fetch('/api/crisis', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ message: userMsg }),
+        });
+      }
+
+      // Get Bot Response using cached contextHistory
+      const botReply = await getChatbotResponse(
+        user?.name || 'Friend', 
+        botName, 
+        userMsg, 
+        contextHistory, 
+        isProactive
+      );
+      
+      // Save Bot Response to DB
+      const botChatRes = await fetch('/api/chats', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({ message: botReply, sender: 'bot' }),
       });
-    }
-
-    // Save User Message
-    const userChatRes = await fetch('/api/chats', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ message: userMsg, sender: 'user', sentiment }),
-    });
-    const userChat = await userChatRes.json();
-    setMessages(prev => [...prev, userChat]);
-
-    // Bot Response
-    setIsTyping(true);
-    
-    // Fetch history from DB to provide context to AI
-    let contextHistory = [];
-    try {
-      const historyRes = await fetch('/api/chats', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const historyData = await historyRes.json();
+      const botChat = await botChatRes.json();
       
-      if (historyData.length > 1) {
-        // The last message in historyData is the one we just sent (userMsg)
-        // We check the gap between this message and the previous one
-        const currentMsg = historyData[historyData.length - 1];
-        const lastMsg = historyData[historyData.length - 2];
-        
-        const currentTime = new Date(currentMsg.timestamp).getTime();
-        const lastTime = new Date(lastMsg.timestamp).getTime();
-        const hoursDiff = (currentTime - lastTime) / (1000 * 60 * 60);
-        
-        // If the last conversation was more than 4 hours ago, start fresh
-        // Otherwise, include the last 10 messages for context
-        if (hoursDiff < 4) {
-          contextHistory = historyData.slice(-11, -1).map((m: any) => ({
-            role: m.sender === 'user' ? 'user' : 'model',
-            parts: [{ text: m.message }]
-          }));
-        } else {
-          console.log("Long gap detected (>4h), starting fresh conversation context.");
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch history for context:", err);
-      // Fallback to current session messages (excluding the one just sent)
-      contextHistory = messages.map(m => ({
-        role: m.sender === 'user' ? 'user' : 'model',
-        parts: [{ text: m.message }]
-      }));
-    }
+      // Update UI with real bot message and update contextHistory
+      setIsTyping(false);
+      setMessages(prev => [...prev, botChat]);
+      
+      // Update contextHistory for next message
+      setContextHistory(prev => [
+        ...prev.slice(-9), // Keep last 9 + 2 new = 11 total
+        { role: 'user', parts: [{ text: userMsg }] },
+        { role: 'model', parts: [{ text: botReply }] }
+      ]);
 
-    const botReply = await getChatbotResponse(user?.name || 'Friend', botName, userMsg, contextHistory, isProactive);
-    
-    const botChatRes = await fetch('/api/chats', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ message: botReply, sender: 'bot' }),
-    });
-    const botChat = await botChatRes.json();
-    
-    setIsTyping(false);
-    setMessages(prev => [...prev, botChat]);
+    } catch (err) {
+      console.error("Chat error:", err);
+      setIsTyping(false);
+      const errorMsg: ChatMessage = {
+        _id: 'error-' + Date.now(),
+        message: "I'm sorry, I'm having a bit of trouble connecting right now. But I'm still here for you.",
+        sender: 'bot',
+        timestamp: new Date().toISOString(),
+        userId: 'system'
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    }
   };
 
   const filteredHistory = historyMessages.filter(msg => {
