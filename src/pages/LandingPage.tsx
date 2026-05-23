@@ -87,7 +87,7 @@ const LandingPage: React.FC = () => {
               <div className="absolute -bottom-6 -left-6 bg-white p-6 rounded-2xl shadow-xl border border-primary/5 max-w-xs">
                 <div className="flex items-center space-x-2 mb-2">
                   <Star className="h-5 w-5 text-yellow-400 fill-current" />
-                  <span className="font-bold text-gray-900">98% Satisfaction</span>
+                  <span className="font-bold text-gray-900">Express Yourselves</span>
                 </div>
                 <p className="text-sm text-gray-500">Users feel more heard and understood after using MindCare AI.</p>
               </div>
