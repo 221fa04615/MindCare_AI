@@ -112,19 +112,14 @@ const ChatPage: React.FC = () => {
     setIsTyping(true);
 
     try {
-      // Run sentiment analysis and bot response preparation in parallel
-      const [sentiment] = await Promise.all([
-        analyzeSentiment(userMsg),
-        // We don't wait for the POST to finish before starting the bot response
-        fetch('/api/chats', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ message: userMsg, sender: 'user' }),
-        })
-      ]);
+      // Get Bot Response and Sentiment in ONE call to save quota
+      const { text: botReply, sentiment } = await getChatbotResponse(
+        user?.name || 'Friend', 
+        botName, 
+        userMsg, 
+        contextHistory, 
+        isProactive
+      );
 
       const isCrisis = sentiment === 'Crisis' || /suicide|die|kill myself/i.test(userMsg);
 
@@ -140,14 +135,15 @@ const ChatPage: React.FC = () => {
         });
       }
 
-      // Get Bot Response using cached contextHistory
-      const botReply = await getChatbotResponse(
-        user?.name || 'Friend', 
-        botName, 
-        userMsg, 
-        contextHistory, 
-        isProactive
-      );
+      // Save User Message with detected sentiment
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: userMsg, sender: 'user', sentiment }),
+      });
       
       // Save Bot Response to DB
       const botChatRes = await fetch('/api/chats', {

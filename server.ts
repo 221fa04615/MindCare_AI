@@ -9,19 +9,34 @@ import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import admin from "firebase-admin";
-
-// Initialize Firebase Admin
-try {
-  admin.initializeApp({
-    projectId: "gen-lang-client-0849779577"
-  });
-  console.log("✅ Firebase Admin initialized");
-} catch (err) {
-  console.error("❌ Firebase Admin initialization failed:", err);
-}
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Admin
+try {
+  if (admin.apps.length === 0) {
+    const serviceAccountPath = path.resolve(__dirname, "firebase-service-account.json");
+    const hasServiceAccount = fs.existsSync(serviceAccountPath);
+
+    if (hasServiceAccount) {
+      const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: serviceAccount.project_id
+      });
+      console.log("✅ Firebase Admin initialized with Service Account");
+    } else {
+      admin.initializeApp({
+        projectId: process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0849779577"
+      });
+      console.log("ℹ️ Firebase Admin initialized with Project ID only (Custom tokens may fail)");
+    }
+  }
+} catch (err) {
+  console.error("❌ Firebase Admin initialization failed:", err);
+}
 
 dotenv.config();
 
@@ -213,7 +228,13 @@ async function startServer() {
       });
       res.json({ token: firebaseToken });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error("❌ Firebase custom token error:", err.message);
+      const isServiceAccountError = err.message.includes("credential") || err.message.includes("key");
+      res.status(500).json({ 
+        error: isServiceAccountError 
+          ? "Firebase Service Account is missing or invalid. Custom tokens cannot be generated." 
+          : err.message 
+      });
     }
   });
 

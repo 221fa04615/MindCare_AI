@@ -36,7 +36,10 @@ export const getChatbotResponse = async (
 ) => {
   if (!GEMINI_API_KEY) {
     console.error("❌ Gemini API Key is missing in the browser environment.");
-    return "I'm sorry, I'm not configured with an API key yet. Please ensure GEMINI_API_KEY is set in your deployment environment variables.";
+    return {
+      text: "I'm sorry, I'm not configured with an API key yet. Please ensure GEMINI_API_KEY is set in your deployment environment variables.",
+      sentiment: "Neutral"
+    };
   }
   
   try {
@@ -49,47 +52,60 @@ export const getChatbotResponse = async (
       ],
       config: {
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "The chatbot's empathetic response" },
+            sentiment: { 
+              type: "string", 
+              enum: ["Positive", "Neutral", "Negative", "Stress", "Anxiety", "Depression", "Crisis"],
+              description: "The detected sentiment of the user's latest message"
+            }
+          },
+          required: ["text", "sentiment"]
+        },
         systemInstruction: `You are ${botName}, a sweet, deeply empathetic, and supportive personal AI psychologist. 
         The user's name is ${userName}. 
-        The user is a person from any part of the world, of any age group. 
         Always use the user's name in the conversation and greet them warmly.
         
-        Respond like a kind, caring psychologist who understands the diverse pressures of life, including work-life balance, academic stress, relationships, aging, and personal growth.
+        Respond like a kind, caring psychologist who understands the diverse pressures of life.
         Your tone should be gentle, comforting, and encouraging.
         
-        CRITICAL DIRECTIVE: Match the user's message length. If the user's message is short (e.g., a greeting like "hello" or a simple "how are you"), keep your response short, sweet, and conversational. Do not over-analyze or write long "essays" for simple messages. If the user provides a long, detailed message about their feelings or a specific situation, you may then provide a longer, more detailed and supportive response.
+        CRITICAL DIRECTIVE: Match the user's message length. If the user's message is short, keep your response short and sweet. If long, be detailed.
         
-        While you are supportive, you should also be a guide for growth. If the user expresses views that are psychologically harmful, self-defeating, or ethically questionable, or if they admit to doing something wrong, you should respond with extreme empathy and wisdom. 
+        SPECIAL DIRECTIVE FOR SERIOUS WRONGDOING: If the user admits to a serious ethical breach, be initially firm/harsh to show gravity, then return to empathy to guide them.
         
-        SPECIAL DIRECTIVE FOR SERIOUS WRONGDOING: If the user admits to a serious ethical or legal breach (like stealing), you should initially be a bit harsh and angry—just enough to make them realize the gravity of their mistake and that such actions are unacceptable. This is a short and small switch; do not continue being angry for longer than necessary. Your primary goal is still to be a real friend and psychologist. After this initial firm correction, immediately return to your sweet, empathetic self to guide them on how to take responsibility, rectify the situation (e.g., returning what was stolen), and move forward on the right path.
+        SENTIMENT ANALYSIS: Analyze the user's latest message and categorize it into one of: Positive, Neutral, Negative, Stress, Anxiety, Depression, Crisis.
         
-        Do not judge or be harsh for minor things. For serious matters, use your empathy to help them reflect on their actions, explain why it was a mistake, and guide them toward a more positive, rational, and healthy path. 
-        Your goal is to help them take responsibility, heal, and grow through kindness and wisdom.
+        If you detect crisis keywords (suicide, die, kill myself), set sentiment to "Crisis" and respond with extreme empathy and encourage professional help.
         
-        Always prioritize the user's emotional safety and well-being. If they just say "hello" or visit after a while, welcome them back with a sweet and warm message.
-        
-        If you detect crisis keywords (suicide, die, kill myself), respond with extreme empathy and encourage professional help immediately, but keep the persona.
-        Your goal is to listen, understand emotions, respond with constructive kindness, and encourage growth.
-        ${isProactive ? "Be proactive: If the user seems stuck or quiet, suggest a specific wellness activity (like a short meditation, a walk, or a gratitude exercise) or ask a thought-provoking question about their day or goals." : ""}`,
+        OUTPUT FORMAT: You MUST return a JSON object with "text" and "sentiment" fields.
+        ${isProactive ? "Be proactive: Suggest a wellness activity or ask a thought-provoking question." : ""}`,
       }
     });
 
-    return response.text || "I'm listening, please tell me more.";
+    const result = JSON.parse(response.text || '{"text": "I\'m listening...", "sentiment": "Neutral"}');
+    return {
+      text: result.text || "I'm listening, please tell me more.",
+      sentiment: result.sentiment || "Neutral"
+    };
   } catch (error: any) {
     console.error("❌ Chatbot response error:", error);
     
-    if (error?.message?.includes("403") || error?.status === "PERMISSION_DENIED") {
-      return "I'm having trouble accessing the AI service (403 Forbidden). Please ensure your API key is valid and has permission to use the Gemini API.";
-    }
+    let fallbackText = "I'm sorry, I'm having a bit of trouble connecting right now. But I'm still here for you.";
     
-    if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED") {
-      return "I'm a bit overwhelmed with requests right now. Please give me a moment and try again.";
+    if (error?.message?.includes("503") || error?.status === "UNAVAILABLE") {
+      fallbackText = "The AI service is currently very busy (503 Service Unavailable). Please try again in a few moments.";
+    } else if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED") {
+      fallbackText = "I've reached my daily limit for free messages (429 Quota Exceeded). Please wait a while or try again tomorrow.";
+    } else if (error?.message?.includes("403") || error?.status === "PERMISSION_DENIED") {
+      fallbackText = "I'm having trouble with my API key permissions (403 Forbidden).";
     }
 
-    if (error?.message?.includes("fetch") || error?.name === "TypeError") {
-      return "I'm having trouble connecting to the internet. Please check your connection and try again.";
-    }
-
-    return "I'm sorry, I'm having a bit of trouble connecting right now. But I'm still here for you. (Error: " + (error?.message || "Unknown") + ")";
+    return {
+      text: fallbackText,
+      sentiment: "Neutral"
+    };
   }
 };
