@@ -79,7 +79,7 @@ const LandingPage: React.FC = () => {
             </div>
             <div className="relative">
               <img
-                src="https://picsum.photos/seed/mentalhealth/800/600"
+                src="https://astrotalk.com/astrology-blog/wp-content/uploads/2023/07/achieve-inner-peace.png"
                 alt="Mental Wellness"
                 className="rounded-3xl shadow-2xl"
                 referrerPolicy="no-referrer"
