@@ -7,7 +7,7 @@
 ## 🚀 Live Demo
 Check out the deployed application: [MindCare AI Live](https://mindcare-ai-serx.onrender.com)
 
----
+----
 
 ## 📖 Project Description & Working
 
